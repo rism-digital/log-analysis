@@ -1,0 +1,17 @@
+[matomo]
+url = "https://analytics.example.com"
+auth_token = "supersecretkey"
+idsite = "1"
+batch_size = 600
+
+[exclude]
+bots = true
+paths = [
+    "/ignored/path*",
+]
+extensions = [
+    'jpg', 'svgz', 'eot', 'png', 'ttf', 'js', 'svg', 'ico', 'webp',
+    'jpeg', 'css', 'woff', 'class', 'woff2', 'xml', 'swf', 'gif',
+    'otf', 'bmp', 'webmanifest'
+]
+
