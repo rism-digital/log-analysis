@@ -2,6 +2,7 @@
 # the last two entries from that list were removed since they did not work well with Python's regex
 # library.
 botua = [
+    r"synthetic-monitoring-agent.*",
     r"monitoring360bot",
     r"Cloudflare-Healthchecks",
     r"360Spider",
