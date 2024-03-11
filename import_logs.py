@@ -149,7 +149,7 @@ def parse_line(line: str, lineno: int, cfg: dict) -> Optional[Hit]:
     return create_hit(json_record, idsite)
 
 
-def main(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
+def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
     with open(logfile_path, mode='rt', encoding="utf-8", errors="surrogateescape") as logfile:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             hit_futures = [executor.submit(parse_line, line, lineno, cfg) for lineno, line in enumerate(logfile, 1)]
@@ -180,9 +180,24 @@ def main(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
     return success
 
 
+def main(logfiles: list[str], dry_run: bool, cfg: dict) -> bool:
+    success: bool = True
+
+    for lf in logfiles:
+        log.info("Processing file %s", lf)
+        try:
+            success &= parse_logfile(lf, dry_run, cfg)
+        except:
+            log.error("Error opening file %s", lf)
+            success &= False
+            continue
+
+    return success
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("logfile", help="Path to the nginx logfile")
+    parser.add_argument("logfiles", type=str, nargs="+", help="Path to the nginx logfile")
     parser.add_argument("--config", "-c", default="config.toml", help="The config file")
     parser.add_argument("--debug", "-d", action="store_true", help="Enable debug messages")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose messages")
@@ -200,7 +215,7 @@ if __name__ == "__main__":
     with open(args.config, "rb") as f:
         outer_cfg: dict = tomllib.load(f)
 
-    overall_success = main(args.logfile, args.dry_run, outer_cfg)
+    overall_success = main(args.logfiles, args.dry_run, outer_cfg)
     if not overall_success:
         sys.exit(-1)
 
