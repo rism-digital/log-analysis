@@ -66,7 +66,7 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
 
     h: Hit = {
         "url": url,
-        "urlref": parsed_line.get("referrer"),
+        "urlref": parsed_line.get("http_referer"),
         "ua": parsed_line.get("http_user_agent"),
         "dimension1": accept_header,
         "dimension2": parsed_line.get("status"),
@@ -143,6 +143,7 @@ def parse_line(line: str, lineno: int, cfg: dict) -> Optional[Hit]:
     line = line.replace('\\x', '\\u00')
     json_record: dict = ujson.loads(line)
     keep_line: bool = apply_line_filters(json_record, cfg)
+
     if not keep_line:
         return None
 
