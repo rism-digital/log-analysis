@@ -7,7 +7,7 @@ import re
 import sys
 import tomllib
 import urllib.parse
-import urllib.request
+import requests
 from typing import TypedDict, Optional
 
 import ujson
@@ -96,15 +96,20 @@ def submit_hit(batch: tuple, cfg: dict) -> bool:
     }
 
     json_data = ujson.dumps(req_data)
-    req = urllib.request.Request(url=matomo_url, data=json_data.encode('utf-8'),
-                                 method="POST", headers={"Content-Type": "application/json"})
-
     log.debug(f"Size of request body: %s KB", sys.getsizeof(json_data) * 0.001)
 
-    with urllib.request.urlopen(req) as response:
-        if response.status != 200:
-            log.error("Request failed: %s %s", response.status, response.reason)
-            return False
+    proxies = None
+    if p := cfg['matomo'].get('https_proxy', None):
+        proxies = {"https": p}
+
+    response = requests.post(url=matomo_url,
+                             data=json_data.encode("utf-8"),
+                             headers={"Content-Type": "application/json"},
+                             proxies=proxies)
+
+    if response.status_code != 200:
+        log.error("Request failed: %s %s", response.status_code, response.reason)
+        return False
 
     return True
 
