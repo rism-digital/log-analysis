@@ -59,6 +59,9 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
     scheme = parsed_line.get("scheme")
     path = parsed_line.get("request_uri")
 
+    if path.startswith("//"):
+        path = path.replace("//", "/")
+
     url = f"{scheme}://{host}{path}"
 
     # Matomo treats the + as a URL space character, so URL encode it.
@@ -115,26 +118,30 @@ def submit_hit(batch: tuple, cfg: dict) -> bool:
 
 
 def apply_line_filters(json_record: dict, cfg: dict) -> bool:
-    url_path: str = json_record.get("request_uri")
+    url_path: str = json_record.get("request_uri", "")
+    if url_path.startswith("//"):
+        url_path = url_path.replace("//", "/")
+
+    request_id: str = json_record.get("request_id", "")
     url_components = urllib.parse.urlparse(url_path)
 
     if url_components.path.endswith(tuple(cfg['exclude']['extensions'])):
-        log.debug("filtering %s: Extension was excluded", url_path)
+        log.debug("filtering %s: Extension was excluded: ID: %s", url_path, request_id)
         return False
 
     for exclude_path in cfg['exclude']['paths']:
         if fnmatch.fnmatch(url_path, exclude_path):
-            log.debug("filtering %s: Path was excluded", url_path)
+            log.debug("filtering %s: Path was excluded: ID: %s", url_path, request_id)
             return False
-        log.debug("passing %s on to the next filter", url_path)
+        log.debug("passing %s on to the next filter: ID: %s", url_path, request_id)
 
     if cfg['exclude']['bots']:
-        user_agent = json_record.get("http_user_agent")
+        user_agent: str = json_record.get("http_user_agent", "")
         if user_agent:
             if re.search(compiled_bot_regexes, user_agent) is not None:
-                log.debug("filtering %s: User agent is a bot.", user_agent)
+                log.debug("filtering %s: User agent is a bot. ID: %s", user_agent, request_id)
                 return False
-            log.debug("keeping %s: User agent is not a bot", user_agent)
+            log.debug("keeping %s: User agent is not a bot. ID: %s", user_agent, request_id)
 
     log.debug("Keeping line with request ID %s", json_record.get("request_id"))
     return True
