@@ -64,6 +64,9 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
 
     url = f"{scheme}://{host}{path}"
 
+    x_forwarded = parsed_line.get("http_x_forwarded_for", "")
+    ip_address = x_forwarded if x_forwarded else parsed_line.get("remote_addr")
+
     # Matomo treats the + as a URL space character, so URL encode it.
     accept_header: str = parsed_line.get("http_accept", "").replace("+", "%2b")
 
@@ -74,7 +77,7 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
         "dimension1": accept_header,
         "dimension2": parsed_line.get("status"),
         "cdt": parsed_line.get("time_iso8601"),
-        "cip": parsed_line.get("remote_addr"),
+        "cip": ip_address,
         "country": parsed_line.get("geoip_country_code").lower(),
         "city": parsed_line.get("geoip_city"),
         "lat": parsed_line.get("geoip_latitude"),
@@ -125,6 +128,8 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
     request_id: str = json_record.get("request_id", "")
     url_components = urllib.parse.urlparse(url_path)
 
+    log.debug("checking if request %s needs to be filtered out", request_id)
+
     for exclude_path in cfg['exclude']['paths']:
         if fnmatch.fnmatch(url_path, exclude_path):
             log.debug("filtering %s: Path was excluded: ID: %s", url_path, request_id)
@@ -134,6 +139,7 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
     if url_components.path.endswith(tuple(cfg['exclude']['extensions'])):
         log.debug("filtering %s: Extension was excluded: ID: %s", url_path, request_id)
         return False
+    log.debug("passed extension check: ID: %s", request_id)
 
     if cfg['exclude']['bots']:
         user_agent: str = json_record.get("http_user_agent", "")
@@ -141,15 +147,15 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
             if re.search(compiled_bot_regexes, user_agent) is not None:
                 log.debug("filtering %s: User agent is a bot. ID: %s", user_agent, request_id)
                 return False
-            log.debug("keeping %s: User agent is not a bot. ID: %s", user_agent, request_id)
 
-    log.debug("Keeping line with request ID %s", json_record.get("request_id"))
+        log.debug("keeping %s: User agent is not a bot. ID: %s", user_agent, request_id)
+
+    log.debug("keeping line with request ID %s", json_record.get("request_id"))
     return True
 
 
 def parse_line(line: str, lineno: int, cfg: dict) -> Optional[Hit]:
-    if lineno % 1000 == 0:
-        log.info("Processing line %s", lineno)
+    log.debug("Processing line %s", lineno)
 
     idsite: str = cfg['matomo']['idsite']
     line = line.replace('\\x', '\\u00')
@@ -159,6 +165,7 @@ def parse_line(line: str, lineno: int, cfg: dict) -> Optional[Hit]:
     if not keep_line:
         return None
 
+    log.debug("creating hit for line with request ID %s", json_record.get("request_id"))
     return create_hit(json_record, idsite)
 
 
