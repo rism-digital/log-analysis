@@ -125,15 +125,15 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
     request_id: str = json_record.get("request_id", "")
     url_components = urllib.parse.urlparse(url_path)
 
-    if url_components.path.endswith(tuple(cfg['exclude']['extensions'])):
-        log.debug("filtering %s: Extension was excluded: ID: %s", url_path, request_id)
-        return False
-
     for exclude_path in cfg['exclude']['paths']:
         if fnmatch.fnmatch(url_path, exclude_path):
             log.debug("filtering %s: Path was excluded: ID: %s", url_path, request_id)
             return False
         log.debug("passing %s on to the next filter: ID: %s", url_path, request_id)
+
+    if url_components.path.endswith(tuple(cfg['exclude']['extensions'])):
+        log.debug("filtering %s: Extension was excluded: ID: %s", url_path, request_id)
+        return False
 
     if cfg['exclude']['bots']:
         user_agent: str = json_record.get("http_user_agent", "")
