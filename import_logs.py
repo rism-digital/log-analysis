@@ -11,6 +11,7 @@ import requests
 from typing import TypedDict, Optional
 
 import ujson
+from netaddr import IPSet, IPAddress
 
 import bots
 
@@ -26,6 +27,7 @@ def compile_all_bot_regexes():
 
 # make this a top-level variable so we don't have to pass it around.
 compiled_bot_regexes = compile_all_bot_regexes()
+compiled_cidr_rules = None
 
 
 def batched(iterable, n):
@@ -117,6 +119,8 @@ def submit_hit(batch: tuple, cfg: dict) -> bool:
         log.error("Request failed: %s %s", response.status_code, response.reason)
         return False
 
+    log.debug("Actual status code: %s", response.status_code)
+
     return True
 
 
@@ -149,6 +153,12 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
                 return False
 
         log.debug("keeping %s: User agent is not a bot. ID: %s", user_agent, request_id)
+
+    if compiled_cidr_rules is not None:
+        ipaddress = IPAddress(json_record.get("http_x_forwarded_for"))
+        if ipaddress in compiled_cidr_rules:
+            log.debug("filtering IP address %s: ID %s", ipaddress, request_id)
+            return False
 
     log.debug("keeping line with request ID %s", json_record.get("request_id"))
     return True
@@ -234,6 +244,9 @@ if __name__ == "__main__":
 
     with open(args.config, "rb") as f:
         outer_cfg: dict = tomllib.load(f)
+
+    if outer_cfg['exclude']['addresses']:
+        compiled_cidr_rules = IPSet(outer_cfg['exclude']['addresses'])
 
     overall_success = main(args.logfiles, args.dry_run, outer_cfg)
     if not overall_success:

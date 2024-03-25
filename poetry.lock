@@ -244,6 +244,20 @@ files = [
 traitlets = "*"
 
 [[package]]
+name = "netaddr"
+version = "1.2.1"
+description = "A network address manipulation library for Python"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "netaddr-1.2.1-py3-none-any.whl", hash = "sha256:bd9e9534b0d46af328cf64f0e5a23a5a43fca292df221c85580b27394793496e"},
+    {file = "netaddr-1.2.1.tar.gz", hash = "sha256:6eb8fedf0412c6d294d06885c110de945cf4d22d2b510d0404f4e06950857987"},
+]
+
+[package.extras]
+nicer-shell = ["ipython"]
+
+[[package]]
 name = "parso"
 version = "0.8.3"
 description = "A Python Parser"
@@ -497,4 +511,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "4e5c276f6022f7f82f10ee09af5362ebdafe7400b0d22e26808f261e9d75e9fe"
+content-hash = "e589f8cf36fac15a3a9c4aea19c75e25045399ba678c78a5cda357349a030b00"
