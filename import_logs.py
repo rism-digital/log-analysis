@@ -1,6 +1,7 @@
 import argparse
 import concurrent.futures
 import fnmatch
+import ipaddress
 import itertools
 import logging
 import re
@@ -58,6 +59,18 @@ class Hit(TypedDict):
 
 def get_ip_address(parsed_line: dict) -> str:
     x_forwarded: Optional[str] = parsed_line.get("http_x_forwarded_for")
+    if "," in x_forwarded:
+        # Proxies can add themselves to the list of XFF headers.
+        # See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For
+        # We're only interested in the first (for now).
+        all_clients: list = x_forwarded.split(", ")
+        x_forwarded = all_clients[0]
+
+    try:
+        ipaddress.ip_address(x_forwarded)
+    except ValueError:
+        x_forwarded = None
+
     remote = parsed_line["remote_addr"]
     return x_forwarded if x_forwarded else remote
 
