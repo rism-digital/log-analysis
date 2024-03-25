@@ -56,6 +56,12 @@ class Hit(TypedDict):
     dp: str         # 1 disables DNS lookups
 
 
+def get_ip_address(parsed_line: dict) -> str:
+    x_forwarded: Optional[str] = parsed_line.get("http_x_forwarded_for")
+    remote = parsed_line["remote_addr"]
+    return x_forwarded if x_forwarded else remote
+
+
 def create_hit(parsed_line: dict, idsite: str) -> Hit:
     host = parsed_line.get("http_host")
     scheme = parsed_line.get("scheme")
@@ -65,9 +71,7 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
         path = path.replace("//", "/")
 
     url = f"{scheme}://{host}{path}"
-
-    x_forwarded = parsed_line.get("http_x_forwarded_for", "")
-    ip_address = x_forwarded if x_forwarded else parsed_line.get("remote_addr")
+    ip_address: str = get_ip_address(parsed_line)
 
     # Matomo treats the + as a URL space character, so URL encode it.
     accept_header: str = parsed_line.get("http_accept", "").replace("+", "%2b")
@@ -155,7 +159,8 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
         log.debug("keeping %s: User agent is not a bot. ID: %s", user_agent, request_id)
 
     if compiled_cidr_rules is not None:
-        ipaddress = IPAddress(json_record.get("http_x_forwarded_for"))
+        thisip = get_ip_address(json_record)
+        ipaddress = IPAddress(thisip)
         if ipaddress in compiled_cidr_rules:
             log.debug("filtering IP address %s: ID %s", ipaddress, request_id)
             return False
@@ -185,11 +190,11 @@ def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
             hit_futures = [executor.submit(parse_line, line, lineno, cfg) for lineno, line in enumerate(logfile, 1)]
             hits = [h.result() for h in concurrent.futures.as_completed(hit_futures)]
 
-            log.info("Found %s hits", len(hits))
-            log.info("Filtered %s", hits.count(None))
+    log.info("Found %s hits", len(hits))
+    log.info("Filtered %s", hits.count(None))
 
-            filt_hits = [h for h in hits if h is not None]
-            log.info("Submitting %s results", len(filt_hits))
+    filt_hits = [h for h in hits if h is not None]
+    log.info("Submitting %s results", len(filt_hits))
 
     success = True
     if dry_run:
@@ -217,8 +222,8 @@ def main(logfiles: list[str], dry_run: bool, cfg: dict) -> bool:
         log.info("Processing file %s", lf)
         try:
             success &= parse_logfile(lf, dry_run, cfg)
-        except:
-            log.error("Error opening file %s", lf)
+        except Exception as e:
+            log.error("Error opening file %s: %s", lf, e)
             success &= False
             continue
 
