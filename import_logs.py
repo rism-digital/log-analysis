@@ -134,6 +134,7 @@ def submit_hit(batch: tuple, cfg: dict) -> bool:
         data=json_data.encode("utf-8"),
         headers={"Content-Type": "application/json"},
         proxies=proxies,
+        timeout=600,
     )
 
     if response.status_code != 200:
@@ -168,12 +169,11 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
 
     if cfg["exclude"]["bots"]:
         user_agent: str = json_record.get("http_user_agent", "")
-        if user_agent:
-            if re.search(compiled_bot_regexes, user_agent) is not None:
-                log.debug(
-                    "filtering %s: User agent is a bot. ID: %s", user_agent, request_id
-                )
-                return False
+        if user_agent and re.search(compiled_bot_regexes, user_agent) is not None:
+            log.debug(
+                "filtering %s: User agent is a bot. ID: %s", user_agent, request_id
+            )
+            return False
 
         log.debug("keeping %s: User agent is not a bot. ID: %s", user_agent, request_id)
 
@@ -204,7 +204,7 @@ def parse_line(line: str, lineno: int, cfg: dict) -> Optional[Hit]:
 
 
 def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
-    with open(logfile_path, encoding="utf-8", errors="surrogateescape") as logfile:
+    with open(logfile_path, encoding="utf-8", errors="surrogateescape") as logfile:  # noqa: SIM117
         with concurrent.futures.ThreadPoolExecutor() as executor:
             hit_futures = [
                 executor.submit(parse_line, line, lineno, cfg)
