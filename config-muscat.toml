@@ -1,0 +1,23 @@
+[matomo]
+url = "https://analytics.rism.digital"
+auth_token = "9ff3ed70634f47285561d41f86aed2a7"
+idsite = "7"
+batch_size = 600
+#https_proxy = "http://proxy-dmz.spk-berlin.de:3128"
+
+[exclude]
+bots = true
+paths = [
+    "*autocomplete*",
+    "*progress-job*",
+    "*marc_editor_*",
+    "*render_embedded*",
+]
+extensions = [
+    'jpg', 'svgz', 'eot', 'png', 'ttf', 'js', 'svg', 'ico', 'webp',
+    'jpeg', 'css', 'woff', 'class', 'woff2', 'xml', 'swf', 'gif',
+    'otf', 'bmp', 'webmanifest'
+]
+addresses = [
+    "101.44.248.0/22"
+]

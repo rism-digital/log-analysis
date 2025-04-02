@@ -6,11 +6,11 @@ import itertools
 import logging
 import re
 import sys
+import tomllib
 import urllib.parse
-from typing import Optional, TypedDict
+from typing import NotRequired, TypedDict
 
 import requests
-import tomllib
 import ujson
 from netaddr import IPAddress, IPSet
 
@@ -43,7 +43,7 @@ class Hit(TypedDict):
     url: str  # page URL
     urlref: str  # referring URL
     ua: str  # user agent
-    dimensions: list[str]  # custom dimensions
+    dimensions: NotRequired[list[str]]  # custom dimensions
     cdt: str  # datetime
     cip: str  # Client IP
     country: str  # Country code (lowercase)
@@ -57,10 +57,17 @@ class Hit(TypedDict):
     idsite: str  # The matomo site
     queuedtracking: str  # set to 0 because the official log shipper was.
     dp: str  # 1 disables DNS lookups
+    dimension1: str
+    dimension2: str
 
 
 def get_ip_address(parsed_line: dict) -> str:
-    x_forwarded: Optional[str] = parsed_line.get("http_x_forwarded_for")
+    x_forwarded: str = parsed_line.get("http_x_forwarded_for", "")
+    remote = parsed_line["remote_addr"]
+
+    if not x_forwarded:
+        return remote
+
     if "," in x_forwarded:
         # Proxies can add themselves to the list of XFF headers.
         # See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For
@@ -71,16 +78,16 @@ def get_ip_address(parsed_line: dict) -> str:
     try:
         ipaddress.ip_address(x_forwarded)
     except ValueError:
-        x_forwarded = None
+        log.info("Could not parse x-forwarded value: %s", x_forwarded)
+        return remote
 
-    remote = parsed_line["remote_addr"]
-    return x_forwarded if x_forwarded else remote
+    return x_forwarded
 
 
 def create_hit(parsed_line: dict, idsite: str) -> Hit:
-    host = parsed_line.get("http_host")
-    scheme = parsed_line.get("scheme")
-    path = parsed_line.get("request_uri")
+    host: str = parsed_line.get("http_host", "")
+    scheme: str = parsed_line.get("scheme", "")
+    path: str = parsed_line.get("request_uri", "")
 
     if path.startswith("//"):
         path = path.replace("//", "/")
@@ -93,18 +100,18 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
 
     h: Hit = {
         "url": url,
-        "urlref": parsed_line.get("http_referer"),
-        "ua": parsed_line.get("http_user_agent"),
+        "urlref": parsed_line.get("http_referer", ""),
+        "ua": parsed_line.get("http_user_agent", ""),
         "dimension1": accept_header,
-        "dimension2": parsed_line.get("status"),
-        "cdt": parsed_line.get("time_iso8601"),
+        "dimension2": parsed_line.get("status", ""),
+        "cdt": parsed_line.get("time_iso8601", ""),
         "cip": ip_address,
-        "country": parsed_line.get("geoip_country_code").lower(),
-        "city": parsed_line.get("geoip_city"),
-        "lat": parsed_line.get("geoip_latitude"),
-        "long": parsed_line.get("geoip_longitude"),
-        "pf_srv": parsed_line.get("request_time"),
-        "bw_bytes": parsed_line.get("bytes_sent"),
+        "country": parsed_line.get("geoip_country_code", "").lower(),
+        "city": parsed_line.get("geoip_city", ""),
+        "lat": parsed_line.get("geoip_latitude", ""),
+        "long": parsed_line.get("geoip_longitude", ""),
+        "pf_srv": parsed_line.get("request_time", ""),
+        "bw_bytes": parsed_line.get("bytes_sent", ""),
         "apiv": "1",
         "rec": "1",
         "idsite": idsite,
@@ -165,6 +172,7 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
     if url_components.path.endswith(tuple(cfg["exclude"]["extensions"])):
         log.debug("filtering %s: Extension was excluded: ID: %s", url_path, request_id)
         return False
+
     log.debug("passed extension check: ID: %s", request_id)
 
     if cfg["exclude"]["bots"]:
@@ -178,17 +186,17 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
         log.debug("keeping %s: User agent is not a bot. ID: %s", user_agent, request_id)
 
     if compiled_cidr_rules is not None:
-        thisip = get_ip_address(json_record)
-        ipaddress = IPAddress(thisip)
-        if ipaddress in compiled_cidr_rules:
-            log.debug("filtering IP address %s: ID %s", ipaddress, request_id)
+        this_ip = get_ip_address(json_record)
+        this_address = IPAddress(this_ip)
+        if this_address in compiled_cidr_rules:
+            log.debug("filtering IP address %s: ID %s", this_address, request_id)
             return False
 
     log.debug("keeping line with request ID %s", json_record.get("request_id"))
     return True
 
 
-def parse_line(line: str, lineno: int, cfg: dict) -> Optional[Hit]:
+def parse_line(line: str, lineno: int, cfg: dict) -> Hit | None:
     log.debug("Processing line %s", lineno)
 
     idsite: str = cfg["matomo"]["idsite"]

@@ -1,22 +1,29 @@
-[tool.poetry]
+[project]
 name = "log-analysis"
 version = "0.1.0"
 description = ""
-authors = ["Andrew Hankinson <andrew.hankinson@gmail.com>"]
+authors = [{ name = "Andrew Hankinson", email = "andrew.hankinson@gmail.com" }]
+requires-python = "~=3.11"
 readme = "README.md"
+dependencies = [
+    "ujson>=5.9.0,<6",
+    "requests>=2.31.0,<3",
+    "netaddr>=1.2.1,<2",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-ujson = "^5.9.0"
-requests = "^2.31.0"
-netaddr = "^1.2.1"
+[dependency-groups]
+dev = [
+    "ipython>=9,<10",
+    "mypy>=1.15.0",
+    "pip>=25.0.1",
+]
 
-[tool.poetry.group.dev.dependencies]
-ipython = "^8.22.2"
+[tool.uv]
+package = false
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling", "pip"]
+build-backend = "hatchling.build"
 
 [tool.ruff.lint]
 select = [
