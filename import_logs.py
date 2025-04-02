@@ -10,7 +10,9 @@ import tomllib
 import urllib.parse
 from typing import NotRequired, TypedDict
 
-import requests
+import httpx
+
+# import requests
 import ujson
 from netaddr import IPAddress, IPSet
 
@@ -122,30 +124,25 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
     return h
 
 
-def submit_hit(batch: tuple, cfg: dict) -> bool:
+def submit_hit(batch: tuple, cfg: dict, client: httpx.Client) -> bool:
     matomo_url = f"{cfg['matomo']['url']}/piwik.php"
     req_data: dict = {
         "token_auth": cfg["matomo"]["auth_token"],
         "requests": list(batch),
     }
 
-    json_data = ujson.dumps(req_data)
+    json_data: str = ujson.dumps(req_data)
     log.debug("Size of request body: %s KB", sys.getsizeof(json_data) * 0.001)
 
-    proxies = None
-    if p := cfg["matomo"].get("https_proxy", None):
-        proxies = {"https": p}
-
-    response = requests.post(
+    response = client.post(
         url=matomo_url,
-        data=json_data.encode("utf-8"),
+        content=json_data.encode("utf-8"),
         headers={"Content-Type": "application/json"},
-        proxies=proxies,
         timeout=600,
     )
 
     if response.status_code != 200:
-        log.error("Request failed: %s %s", response.status_code, response.reason)
+        log.error("Request failed: %s %s", response.status_code, response.reason_phrase)
         return False
 
     log.debug("Actual status code: %s", response.status_code)
@@ -234,8 +231,14 @@ def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
     batch_size: int = cfg["matomo"]["batch_size"]
     count = 0
 
+    proxies = None
+    if p := cfg["matomo"].get("https_proxy", None):
+        proxies = {"https://": httpx.HTTPTransport(proxy=p)}
+
+    client = httpx.Client(mounts=proxies)
+
     for batch in batched(filt_hits, batch_size):
-        success &= submit_hit(batch, cfg)
+        success &= submit_hit(batch, cfg, client)
         count += len(batch)
         log.info("Submitted %s records", count)
 
