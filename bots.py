@@ -183,6 +183,7 @@ botua = [
     r"SplitSignalBot",
     r"SiteAuditBot/[\d.]+",
     r"SensikaBot",
+    r"SentryUptimeBot",
     r"SEOENG(?:World)?Bot",
     r"SEOkicks-Robot",
     r"seoscanners\.net",
