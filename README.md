@@ -9,4 +9,4 @@ to support fast JSON reading and writing.
 
 On the minus side, it only supports uploading one log file at a time.
 
-The virtual environment for it is managed with Poetry, like all other scripts we write. 
+The virtual environment for it is managed with UV, like all other scripts we write. 
