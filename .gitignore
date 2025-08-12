@@ -2,3 +2,5 @@
 __pycache__
 config.toml
 .DS_Store
+test-files/access.log.1
+test-files/access.log.2.gz

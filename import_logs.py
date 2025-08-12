@@ -1,6 +1,7 @@
 import argparse
 import concurrent.futures
 import fnmatch
+import gzip
 import ipaddress
 import itertools
 import logging
@@ -8,6 +9,8 @@ import re
 import sys
 import tomllib
 import urllib.parse
+from collections import deque
+from contextlib import contextmanager
 from typing import NotRequired, TypedDict
 
 import httpx
@@ -208,20 +211,74 @@ def parse_line(line: str, lineno: int, cfg: dict) -> Hit | None:
     return create_hit(json_record, idsite)
 
 
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _is_gzip(pathlike) -> bool:
+    # Works for str/PathLike
+    with open(pathlike, "rb") as ff:
+        return ff.read(2) == _GZIP_MAGIC
+
+
+@contextmanager
+def smart_open(path, mode="rt", *iargs, **kwargs):
+    """
+    Open a file normally, or with gzip if it is gzipped.
+    Supports text/binary modes. Pass encoding/errors/newline in text mode.
+    Usage: with smart_open(path, encoding="utf-8", errors="surrogateescape") as f: ...
+    """
+    opener = gzip.open if _is_gzip(path) else open
+    ff = opener(path, mode, *iargs, **kwargs)
+    try:
+        yield ff
+    finally:
+        ff.close()
+
+
 def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
-    with open(logfile_path, encoding="utf-8", errors="surrogateescape") as logfile:  # noqa: SIM117
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            hit_futures = [
-                executor.submit(parse_line, line, lineno, cfg)
-                for lineno, line in enumerate(logfile, 1)
-            ]
-            hits = [h.result() for h in concurrent.futures.as_completed(hit_futures)]
+    lineno = 0
+    hits_found = 0
+    filtered_hits = 0
+    hits: deque[Hit] = deque()
 
-    log.info("Found %s hits", len(hits))
-    log.info("Filtered %s", hits.count(None))
+    with (
+        smart_open(logfile_path, encoding="utf-8", errors="surrogateescape") as logfile,
+        concurrent.futures.ThreadPoolExecutor() as executor,
+    ):
+        # hit_futures = [
+        #     executor.submit(parse_line, line, lineno, cfg)
+        #     for lineno, line in enumerate(logfile, 1)
+        # ]
+        # hits = [h.result() for h in concurrent.futures.as_completed(hit_futures)]
+        max_in_flight = 4 * executor._max_workers  # tune as needed
+        in_flight: deque = deque()
 
-    filt_hits = [h for h in hits if h is not None]
-    log.info("Submitting %s results", len(filt_hits))
+        def submit_more():
+            nonlocal lineno
+            while len(in_flight) < max_in_flight:
+                line = logfile.readline()
+                if not line:
+                    break
+                lineno += 1
+                in_flight.append(executor.submit(parse_line, line, lineno, cfg))
+
+        submit_more()
+        while in_flight:
+            fut = in_flight.popleft()
+            try:
+                result = fut.result()
+                if result is not None:
+                    hits_found += 1
+                    hits.append(result)
+                else:
+                    filtered_hits += 1
+            except Exception as e:
+                log.error("An exception occurred: %s", e)
+            submit_more()
+
+    log.info("Found %s lines", lineno)
+    log.info("Filtered %s", filtered_hits)
+    log.info("Submitting %s results", hits_found)
 
     success = True
     if dry_run:
@@ -237,7 +294,7 @@ def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
 
     client = httpx.Client(mounts=proxies)
 
-    for batch in batched(filt_hits, batch_size):
+    for batch in batched(hits, batch_size):
         success &= submit_hit(batch, cfg, client)
         count += len(batch)
         log.info("Submitted %s records", count)
