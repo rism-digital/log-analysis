@@ -3,12 +3,12 @@ name = "log-analysis"
 version = "1.2.0"
 description = ""
 authors = [{ name = "Andrew Hankinson", email = "andrew.hankinson@gmail.com" }]
-requires-python = "~=3.11"
+requires-python = ">=3.13,<4.0"
 readme = "README.md"
 dependencies = [
-    "ujson>=5.9.0,<6",
     "netaddr>=1.2.1,<2",
     "httpx>=0.28.1",
+    "orjson>=3.11.3",
 ]
 
 [dependency-groups]
@@ -24,6 +24,9 @@ package = false
 [build-system]
 requires = ["hatchling", "pip"]
 build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py313"
 
 [tool.ruff.lint]
 select = [

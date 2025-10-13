@@ -14,9 +14,7 @@ from contextlib import contextmanager
 from typing import NotRequired, TypedDict
 
 import httpx
-
-# import requests
-import ujson
+import orjson
 from netaddr import IPAddress, IPSet
 
 import bots
@@ -81,12 +79,13 @@ def get_ip_address(parsed_line: dict) -> str:
         x_forwarded = all_clients[0]
 
     try:
-        ipaddress.ip_address(x_forwarded)
+        # Validate an IP address.
+        ipaddress.ip_address(x_forwarded)  # type: ignore[arg-type]
     except ValueError:
         log.info("Could not parse x-forwarded value: %s", x_forwarded)
         return remote
 
-    return x_forwarded
+    return x_forwarded  # type: ignore[return-value]
 
 
 def create_hit(parsed_line: dict, idsite: str) -> Hit:
@@ -134,7 +133,7 @@ def submit_hit(batch: tuple, cfg: dict, client: httpx.Client) -> bool:
         "requests": list(batch),
     }
 
-    json_data: str = ujson.dumps(req_data)
+    json_data: str = orjson.dumps(req_data).decode("utf-8")
     log.debug("Size of request body: %s KB", sys.getsizeof(json_data) * 0.001)
 
     response = client.post(
@@ -201,7 +200,7 @@ def parse_line(line: str, lineno: int, cfg: dict) -> Hit | None:
 
     idsite: str = cfg["matomo"]["idsite"]
     line = line.replace("\\x", "\\u00")
-    json_record: dict = ujson.loads(line)
+    json_record: dict = orjson.loads(line)
     keep_line: bool = apply_line_filters(json_record, cfg)
 
     if not keep_line:
@@ -255,7 +254,7 @@ def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
                 if not line:
                     break
                 lineno += 1
-                in_flight.append(executor.submit(parse_line, line, lineno, cfg))
+                in_flight.append(executor.submit(parse_line, line, lineno, cfg))  # type: ignore[arg-type]
                 if lineno % 1000 == 0:
                     log.info("Read %s lines", lineno)
 
