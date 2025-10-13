@@ -1,6 +1,6 @@
 [project]
 name = "log-analysis"
-version = "0.1.0"
+version = "1.2.0"
 description = ""
 authors = [{ name = "Andrew Hankinson", email = "andrew.hankinson@gmail.com" }]
 requires-python = "~=3.11"
