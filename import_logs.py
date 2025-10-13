@@ -67,7 +67,7 @@ class Hit(TypedDict):
 
 
 def get_ip_address(parsed_line: dict) -> str:
-    x_forwarded: str = parsed_line.get("http_x_forwarded_for", "")
+    x_forwarded: str | None = parsed_line.get("http_x_forwarded_for")
     remote = parsed_line["remote_addr"]
 
     if not x_forwarded:
@@ -245,11 +245,6 @@ def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
         smart_open(logfile_path, encoding="utf-8", errors="surrogateescape") as logfile,
         concurrent.futures.ThreadPoolExecutor() as executor,
     ):
-        # hit_futures = [
-        #     executor.submit(parse_line, line, lineno, cfg)
-        #     for lineno, line in enumerate(logfile, 1)
-        # ]
-        # hits = [h.result() for h in concurrent.futures.as_completed(hit_futures)]
         max_in_flight = 4 * executor._max_workers  # tune as needed
         in_flight: deque = deque()
 
@@ -261,6 +256,8 @@ def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
                     break
                 lineno += 1
                 in_flight.append(executor.submit(parse_line, line, lineno, cfg))
+                if lineno % 1000 == 0:
+                    log.info("Read %s lines", lineno)
 
         submit_more()
         while in_flight:
