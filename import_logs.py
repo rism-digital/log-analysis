@@ -200,7 +200,12 @@ def parse_line(line: str, lineno: int, cfg: dict) -> Hit | None:
 
     idsite: str = cfg["matomo"]["idsite"]
     line = line.replace("\\x", "\\u00")
-    json_record: dict = orjson.loads(line)
+    try:
+        json_record: dict = orjson.loads(line)
+    except orjson.JSONDecodeError:
+        log.error("Could not decode line %s", line)
+        return None
+
     keep_line: bool = apply_line_filters(json_record, cfg)
 
     if not keep_line:
