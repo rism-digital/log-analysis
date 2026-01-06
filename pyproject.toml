@@ -9,6 +9,7 @@ dependencies = [
     "netaddr>=1.2.1,<2",
     "httpx>=0.28.1",
     "orjson>=3.11.3",
+    "regex>=2025.11.3",
 ]
 
 [dependency-groups]

@@ -6,7 +6,6 @@ import gzip
 import ipaddress
 import itertools
 import logging
-import re
 import sys
 import tomllib
 import urllib.parse
@@ -17,6 +16,7 @@ from typing import NotRequired, TypedDict
 
 import httpx
 import orjson
+import regex as re
 from netaddr import IPAddress, IPSet
 
 import bots
