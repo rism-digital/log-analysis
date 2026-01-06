@@ -1,4 +1,5 @@
 import argparse
+import bz2
 import concurrent.futures
 import fnmatch
 import gzip
@@ -11,6 +12,7 @@ import tomllib
 import urllib.parse
 from collections import deque
 from contextlib import contextmanager
+from pathlib import Path
 from typing import NotRequired, TypedDict
 
 import httpx
@@ -216,27 +218,45 @@ def parse_line(line: str, lineno: int, cfg: dict) -> Hit | None:
 
 
 _GZIP_MAGIC = b"\x1f\x8b"
+_BZ2_MAGIC = b"BZ"
 
-
-def _is_gzip(pathlike) -> bool:
-    # Works for str/PathLike
-    with open(pathlike, "rb") as ff:
-        return ff.read(2) == _GZIP_MAGIC
+PathLike = str | Path
 
 
 @contextmanager
-def smart_open(path, mode="rt", *iargs, **kwargs):
+def smart_open(path: PathLike, mode="rt", *args, **kwargs):
     """
-    Open a file normally, or with gzip if it is gzipped.
-    Supports text/binary modes. Pass encoding/errors/newline in text mode.
-    Usage: with smart_open(path, encoding="utf-8", errors="surrogateescape") as f: ...
+    Open a file normally, or with gzip/bz2 if compressed.
+    Supports text/binary modes.
+
+    Usage:
+        with smart_open(path, encoding="utf-8", errors="surrogateescape") as f:
+            ...
     """
-    opener = gzip.open if _is_gzip(path) else open
-    ff = opener(path, mode, *iargs, **kwargs)
+    opener = _get_opener(path)
+    logfile = opener(path, mode, *args, **kwargs)
     try:
-        yield ff
+        yield logfile
     finally:
-        ff.close()
+        logfile.close()
+
+
+def _get_opener(path: PathLike):
+    if _is_gzip(path):
+        return gzip.open
+    if _is_bz2(path):
+        return bz2.open
+    return open
+
+
+def _is_gzip(path: PathLike) -> bool:
+    with open(path, "rb") as maybe_gzip:
+        return maybe_gzip.read(2) == _GZIP_MAGIC
+
+
+def _is_bz2(path: PathLike) -> bool:
+    with open(path, "rb") as maybe_bzip:
+        return maybe_bzip.read(2) == _BZ2_MAGIC
 
 
 def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
