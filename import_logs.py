@@ -1,6 +1,5 @@
 import argparse
 import bz2
-import concurrent.futures
 import fnmatch
 import gzip
 import ipaddress
@@ -8,9 +7,8 @@ import itertools
 import logging
 import sys
 import tomllib
-import urllib.parse
 from collections import deque
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import timedelta
 from pathlib import Path
 from typing import NotRequired, TypedDict
@@ -38,6 +36,20 @@ def compile_all_bot_regexes():
 # make this a top-level variable so we don't have to pass it around.
 compiled_bot_regexes = compile_all_bot_regexes()
 compiled_cidr_rules = None
+
+
+class ExcludeConfig(TypedDict):
+    paths: tuple[str, ...]
+    extensions: tuple[str, ...]
+    bots: bool
+
+
+class ParsedLineContext(TypedDict):
+    json_record: dict
+    request_path: str
+    request_path_only: str
+    client_ip: str
+    user_agent: str
 
 
 def batched(iterable, n):
@@ -92,16 +104,16 @@ def get_ip_address(parsed_line: dict) -> str:
     return x_forwarded  # type: ignore[return-value]
 
 
-def create_hit(parsed_line: dict, idsite: str) -> Hit:
+def normalize_request_path(path: str) -> str:
+    if path.startswith("//"):
+        return f"/{path.lstrip('/')}"
+    return path
+
+
+def create_hit(parsed_line: dict, idsite: str, client_ip: str, request_path: str) -> Hit:
     host: str = parsed_line.get("http_host", "")
     scheme: str = parsed_line.get("scheme", "")
-    path: str = parsed_line.get("request_uri", "")
-
-    if path.startswith("//"):
-        path = path.replace("//", "/")
-
-    url = f"{scheme}://{host}{path}"
-    ip_address: str = get_ip_address(parsed_line)
+    url = f"{scheme}://{host}{request_path}"
 
     # Matomo treats the + as a URL space character, so URL encode it.
     accept_header: str = parsed_line.get("http_accept", "").replace("+", "%2b")
@@ -113,7 +125,7 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
         "dimension1": accept_header,
         "dimension2": parsed_line.get("status", ""),
         "cdt": parsed_line.get("time_iso8601", ""),
-        "cip": ip_address,
+        "cip": client_ip,
         "country": parsed_line.get("geoip_country_code", "").lower(),
         "city": parsed_line.get("geoip_city", ""),
         "lat": parsed_line.get("geoip_latitude", ""),
@@ -158,30 +170,28 @@ def submit_hit(batch: tuple, cfg: dict, client: SyncClient) -> bool:
     return True
 
 
-def apply_line_filters(json_record: dict, cfg: dict) -> bool:
-    url_path: str = json_record.get("request_uri", "")
-    if url_path.startswith("//"):
-        url_path = url_path.replace("//", "/")
-
+def apply_line_filters(parsed_line: ParsedLineContext, exclude_cfg: ExcludeConfig) -> bool:
+    json_record = parsed_line["json_record"]
+    url_path = parsed_line["request_path"]
+    url_path_only = parsed_line["request_path_only"]
     request_id: str = json_record.get("request_id", "")
-    url_components = urllib.parse.urlparse(url_path)
 
     log.debug("checking if request %s needs to be filtered out", request_id)
 
-    for exclude_path in cfg["exclude"]["paths"]:
+    for exclude_path in exclude_cfg["paths"]:
         if fnmatch.fnmatch(url_path, exclude_path):
             log.debug("filtering %s: Path was excluded: ID: %s", url_path, request_id)
             return False
         log.debug("passing %s on to the next filter: ID: %s", url_path, request_id)
 
-    if url_components.path.endswith(tuple(cfg["exclude"]["extensions"])):
+    if url_path_only.endswith(exclude_cfg["extensions"]):
         log.debug("filtering %s: Extension was excluded: ID: %s", url_path, request_id)
         return False
 
     log.debug("passed extension check: ID: %s", request_id)
 
-    if cfg["exclude"]["bots"]:
-        user_agent: str = json_record.get("http_user_agent", "")
+    if exclude_cfg["bots"]:
+        user_agent = parsed_line["user_agent"]
         if user_agent and re.search(compiled_bot_regexes, user_agent) is not None:
             log.debug(
                 "filtering %s: User agent is a bot. ID: %s", user_agent, request_id
@@ -191,8 +201,7 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
         log.debug("keeping %s: User agent is not a bot. ID: %s", user_agent, request_id)
 
     if compiled_cidr_rules is not None:
-        this_ip = get_ip_address(json_record)
-        this_address = IPAddress(this_ip)
+        this_address = IPAddress(parsed_line["client_ip"])
         if this_address in compiled_cidr_rules:
             log.debug("filtering IP address %s: ID %s", this_address, request_id)
             return False
@@ -201,24 +210,42 @@ def apply_line_filters(json_record: dict, cfg: dict) -> bool:
     return True
 
 
-def parse_line(line: str, lineno: int, cfg: dict) -> Hit | None:
+def build_parsed_line_context(json_record: dict) -> ParsedLineContext:
+    request_path = normalize_request_path(json_record.get("request_uri", ""))
+    return {
+        "json_record": json_record,
+        "request_path": request_path,
+        "request_path_only": request_path.split("?", 1)[0],
+        "client_ip": get_ip_address(json_record),
+        "user_agent": json_record.get("http_user_agent", ""),
+    }
+
+
+def parse_line(line: str, lineno: int, cfg: dict, exclude_cfg: ExcludeConfig) -> Hit | None:
     log.debug("Processing line %s", lineno)
 
     idsite: str = cfg["matomo"]["idsite"]
-    line = line.replace("\\x", "\\u00")
+    if "\\x" in line:
+        line = line.replace("\\x", "\\u00")
     try:
         json_record: dict = orjson.loads(line)
     except orjson.JSONDecodeError:
         log.error("Could not decode line %s", line)
         return None
 
-    keep_line: bool = apply_line_filters(json_record, cfg)
+    parsed_line = build_parsed_line_context(json_record)
+    keep_line = apply_line_filters(parsed_line, exclude_cfg)
 
     if not keep_line:
         return None
 
     log.debug("creating hit for line with request ID %s", json_record.get("request_id"))
-    return create_hit(json_record, idsite)
+    return create_hit(
+        json_record,
+        idsite,
+        parsed_line["client_ip"],
+        parsed_line["request_path"],
+    )
 
 
 _GZIP_MAGIC = b"\x1f\x8b"
@@ -267,61 +294,63 @@ def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
     lineno = 0
     hits_found = 0
     filtered_hits = 0
-    hits: deque[Hit] = deque()
-
-    with (
-        smart_open(logfile_path, encoding="utf-8", errors="surrogateescape") as logfile,
-        concurrent.futures.ThreadPoolExecutor() as executor,
-    ):
-        max_in_flight = 4 * executor._max_workers  # tune as needed
-        in_flight: deque = deque()
-
-        def submit_more():
-            nonlocal lineno
-            while len(in_flight) < max_in_flight:
-                line = logfile.readline()
-                if not line:
-                    break
-                lineno += 1
-                in_flight.append(executor.submit(parse_line, line, lineno, cfg))  # type: ignore[arg-type]
-                if lineno % 1000 == 0:
-                    log.info("Read %s lines", lineno)
-
-        submit_more()
-        while in_flight:
-            fut = in_flight.popleft()
-            try:
-                result = fut.result()
-                if result is not None:
-                    hits_found += 1
-                    hits.append(result)
-                else:
-                    filtered_hits += 1
-            except Exception as e:
-                log.error("An exception occurred: %s", e)
-            submit_more()
-
-    log.info("Found %s lines", lineno)
-    log.info("Filtered %s", filtered_hits)
-    log.info("Submitting %s results", hits_found)
-
-    success = True
-    if dry_run:
-        log.info("Dry run. Exiting before submitting results")
-        return success
-
+    pending_hits: deque[Hit] = deque()
     batch_size: int = cfg["matomo"]["batch_size"]
+    exclude_cfg: ExcludeConfig = {
+        "paths": tuple(cfg["exclude"]["paths"]),
+        "extensions": tuple(cfg["exclude"]["extensions"]),
+        "bots": cfg["exclude"]["bots"],
+    }
     count = 0
+    success = True
 
     client_builder = SyncClientBuilder()
     if p := cfg["matomo"].get("https_proxy", None):
         client_builder.proxy(ProxyBuilder.https(p))
 
-    with client_builder.build() as client:
-        for batch in batched(hits, batch_size):
-            success &= submit_hit(batch, cfg, client)
-            count += len(batch)
-            log.info("Submitted %s records", count)
+    with smart_open(logfile_path, encoding="utf-8", errors="surrogateescape") as logfile:
+        client_cm = client_builder.build() if not dry_run else nullcontext(None)
+        with client_cm as client:
+            for line in logfile:
+                lineno += 1
+                if lineno % 1000 == 0:
+                    log.info("Read %s lines", lineno)
+
+                try:
+                    result = parse_line(line, lineno, cfg, exclude_cfg)
+                except Exception as e:
+                    log.error("An exception occurred: %s", e)
+                    filtered_hits += 1
+                    continue
+
+                if result is None:
+                    filtered_hits += 1
+                    continue
+
+                hits_found += 1
+                pending_hits.append(result)
+
+                if dry_run or len(pending_hits) < batch_size:
+                    continue
+
+                success &= submit_hit(tuple(pending_hits), cfg, client)
+                count += len(pending_hits)
+                pending_hits.clear()
+                log.info("Submitted %s records", count)
+
+            if pending_hits and client is not None:
+                success &= submit_hit(tuple(pending_hits), cfg, client)
+                count += len(pending_hits)
+                pending_hits.clear()
+                log.info("Submitted %s records", count)
+
+    log.info("Found %s lines", lineno)
+    log.info("Filtered %s", filtered_hits)
+    log.info("Submitting %s results", hits_found)
+
+    if dry_run:
+        log.info("Dry run. Exiting before submitting results")
+        return success
 
     if not success:
         log.error("Some uploads failed. Please see the log messages.")
