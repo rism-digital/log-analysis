@@ -11,13 +11,15 @@ import tomllib
 import urllib.parse
 from collections import deque
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
-import httpx
 import orjson
 import regex as re
 from netaddr import IPAddress, IPSet
+from pyreqwest.client import SyncClient, SyncClientBuilder
+from pyreqwest.proxy import ProxyBuilder
 
 import bots
 
@@ -128,7 +130,7 @@ def create_hit(parsed_line: dict, idsite: str) -> Hit:
     return h
 
 
-def submit_hit(batch: tuple, cfg: dict, client: httpx.Client) -> bool:
+def submit_hit(batch: tuple, cfg: dict, client: SyncClient) -> bool:
     matomo_url = f"{cfg['matomo']['url']}/piwik.php"
     req_data: dict = {
         "token_auth": cfg["matomo"]["auth_token"],
@@ -138,18 +140,20 @@ def submit_hit(batch: tuple, cfg: dict, client: httpx.Client) -> bool:
     json_data: str = orjson.dumps(req_data).decode("utf-8")
     log.debug("Size of request body: %s KB", sys.getsizeof(json_data) * 0.001)
 
-    response = client.post(
-        url=matomo_url,
-        content=json_data.encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        timeout=600,
+    response = (
+        client.post(matomo_url)
+        .headers({"Content-Type": "application/json"})
+        .body_bytes(json_data.encode("utf-8"))
+        .timeout(timedelta(seconds=600))
+        .build()
+        .send()
     )
 
-    if response.status_code != 200:
-        log.error("Request failed: %s %s", response.status_code, response.reason_phrase)
+    if response.status != 200:
+        log.error("Request failed: %s %s", response.status, response.text())
         return False
 
-    log.debug("Actual status code: %s", response.status_code)
+    log.debug("Actual status code: %s", response.status)
 
     return True
 
@@ -309,16 +313,15 @@ def parse_logfile(logfile_path: str, dry_run: bool, cfg: dict) -> bool:
     batch_size: int = cfg["matomo"]["batch_size"]
     count = 0
 
-    proxies = None
+    client_builder = SyncClientBuilder()
     if p := cfg["matomo"].get("https_proxy", None):
-        proxies = {"https://": httpx.HTTPTransport(proxy=p)}
+        client_builder.proxy(ProxyBuilder.https(p))
 
-    client = httpx.Client(mounts=proxies)
-
-    for batch in batched(hits, batch_size):
-        success &= submit_hit(batch, cfg, client)
-        count += len(batch)
-        log.info("Submitted %s records", count)
+    with client_builder.build() as client:
+        for batch in batched(hits, batch_size):
+            success &= submit_hit(batch, cfg, client)
+            count += len(batch)
+            log.info("Submitted %s records", count)
 
     if not success:
         log.error("Some uploads failed. Please see the log messages.")

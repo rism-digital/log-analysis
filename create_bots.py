@@ -1,16 +1,16 @@
 import argparse
 import re
 
-import httpx
+from pyreqwest.client import SyncClientBuilder
 
 YML_URL = "https://raw.githubusercontent.com/matomo-org/device-detector/refs/heads/master/regexes/bots.yml"
 
 
 def download_yml(url):
-    with httpx.Client() as client:
-        response = client.get(url)
-        response.raise_for_status()
-        return response.text
+    with SyncClientBuilder().build() as client:
+        response = client.get(url).build().send()
+        response.error_for_status()
+        return response.text()
 
 
 def extract_regex_patterns(yml_content):
