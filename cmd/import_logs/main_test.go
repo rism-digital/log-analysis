@@ -344,6 +344,9 @@ func TestParseArgsAllowsInterspersedFlags(t *testing.T) {
 	if len(args.LogFiles) != 2 {
 		t.Fatalf("unexpected logfiles: %#v", args.LogFiles)
 	}
+	if args.BotsFile != "bots.json" {
+		t.Fatalf("unexpected default bots file: %s", args.BotsFile)
+	}
 }
 
 func TestParseArgsReportImpliesDryRun(t *testing.T) {
@@ -353,6 +356,16 @@ func TestParseArgsReportImpliesDryRun(t *testing.T) {
 	}
 	if !args.Report || !args.DryRun {
 		t.Fatalf("expected report and dry-run to be true: %#v", args)
+	}
+}
+
+func TestParseArgsSupportsBotsFile(t *testing.T) {
+	args, err := parseArgs([]string{"--bots-file", "/opt/log-analysis/bots.json", "first.log"})
+	if err != nil {
+		t.Fatalf("parseArgs error: %v", err)
+	}
+	if args.BotsFile != "/opt/log-analysis/bots.json" {
+		t.Fatalf("unexpected bots file: %s", args.BotsFile)
 	}
 }
 

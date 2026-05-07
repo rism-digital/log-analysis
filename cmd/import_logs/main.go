@@ -90,6 +90,7 @@ func (l *logger) Errorf(format string, args ...any) { l.logf(levelWarning, "ERRO
 type cliArgs struct {
 	LogFiles []string
 	Config   string
+	BotsFile string
 	Debug    bool
 	Verbose  bool
 	DryRun   bool
@@ -839,7 +840,7 @@ func (i *Importer) run(logfiles []string, dryRun bool) ([]fileStats, bool) {
 }
 
 func parseArgs(args []string) (cliArgs, error) {
-	parsed := cliArgs{Config: "config.toml"}
+	parsed := cliArgs{Config: "config.toml", BotsFile: "bots.json"}
 
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
@@ -864,8 +865,16 @@ func parseArgs(args []string) (cliArgs, error) {
 				return cliArgs{}, errors.New("missing value for --config")
 			}
 			parsed.Config = args[index]
+		case arg == "--bots-file":
+			index++
+			if index >= len(args) {
+				return cliArgs{}, errors.New("missing value for --bots-file")
+			}
+			parsed.BotsFile = args[index]
 		case strings.HasPrefix(arg, "--config="):
 			parsed.Config = strings.TrimPrefix(arg, "--config=")
+		case strings.HasPrefix(arg, "--bots-file="):
+			parsed.BotsFile = strings.TrimPrefix(arg, "--bots-file=")
 		case strings.HasPrefix(arg, "-c="):
 			parsed.Config = strings.TrimPrefix(arg, "-c=")
 		case strings.HasPrefix(arg, "-"):
@@ -895,7 +904,7 @@ func readConfig(path string) (Config, error) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s [--config FILE] [--debug] [--verbose] [--dry-run] [--report] logfile [logfile ...]\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "Usage: %s [--config FILE] [--bots-file FILE] [--debug] [--verbose] [--dry-run] [--report] logfile [logfile ...]\n", filepath.Base(os.Args[0]))
 }
 
 func renderReportTable(stats []fileStats) string {
@@ -1022,7 +1031,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	matcher, matcherPath, err := loadBotMatcher([]string{"bots.json"})
+	matcher, matcherPath, err := loadBotMatcher([]string{args.BotsFile})
 	if err != nil {
 		log.Errorf("Could not load bot regex data: %v", err)
 		os.Exit(1)

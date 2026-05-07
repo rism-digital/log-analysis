@@ -16,6 +16,12 @@ go build -o import_logs ./cmd/import_logs
 ./import_logs --config config-muscat.toml /path/to/log.json
 ```
 
+If you run from cron or another working directory, pass the bots file explicitly:
+
+```sh
+./import_logs --config /opt/log-analysis/config.toml --bots-file /opt/log-analysis/bots.json /var/log/nginx/access.log.1
+```
+
 It supports plain, gzip, and bzip2 logs; config-driven filtering; CIDR exclusions; custom dimensions; Matomo batching;
 and bot detection based on the Matomo device-detector regex list.
 
