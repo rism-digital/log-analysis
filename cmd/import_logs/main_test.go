@@ -369,6 +369,41 @@ func TestParseArgsSupportsBotsFile(t *testing.T) {
 	}
 }
 
+func TestParseArgsSupportsMatomoDebug(t *testing.T) {
+	args, err := parseArgs([]string{"--matomo-debug", "first.log"})
+	if err != nil {
+		t.Fatalf("parseArgs error: %v", err)
+	}
+	if !args.MatomoDebug {
+		t.Fatalf("expected MatomoDebug=true: %#v", args)
+	}
+}
+
+func TestMatomoDiagnosticsBatchResult(t *testing.T) {
+	diag := newMatomoDiagnostics()
+	body := []byte(`{"status":"success","tracked":3,"invalid":2,"invalid_requests":["bad url","bad url"]}`)
+	diag.addBatchResult(5, body)
+
+	if diag.SubmittedBatches != 1 || diag.SubmittedHits != 5 {
+		t.Fatalf("unexpected submitted totals: %#v", diag)
+	}
+	if diag.TrackedHits != 3 || diag.InvalidHits != 2 || diag.UnknownHits != 0 {
+		t.Fatalf("unexpected tracked/invalid totals: %#v", diag)
+	}
+	if diag.ReasonCounts["bad url"] != 2 {
+		t.Fatalf("unexpected reason counts: %#v", diag.ReasonCounts)
+	}
+}
+
+func TestMatomoDiagnosticsParseError(t *testing.T) {
+	diag := newMatomoDiagnostics()
+	diag.addBatchResult(4, []byte(`{not-json}`))
+
+	if diag.ParseErrors != 1 || diag.UnknownHits != 4 {
+		t.Fatalf("unexpected parse failure accounting: %#v", diag)
+	}
+}
+
 func TestRenderReportTableIncludesTotal(t *testing.T) {
 	stats := []fileStats{
 		{FilePath: "a.log", Total: 10, Real: 4, Bot: 3, Ignored: 2, Errors: 1},

@@ -88,13 +88,14 @@ func (l *logger) Warnf(format string, args ...any)  { l.logf(levelWarning, "WARN
 func (l *logger) Errorf(format string, args ...any) { l.logf(levelWarning, "ERROR", format, args...) }
 
 type cliArgs struct {
-	LogFiles []string
-	Config   string
-	BotsFile string
-	Debug    bool
-	Verbose  bool
-	DryRun   bool
-	Report   bool
+	LogFiles    []string
+	Config      string
+	BotsFile    string
+	Debug       bool
+	Verbose     bool
+	DryRun      bool
+	Report      bool
+	MatomoDebug bool
 }
 
 type Config struct {
@@ -142,6 +143,116 @@ type fileStats struct {
 	Ignored       int
 	Errors        int
 	BotUserAgents map[string]int
+}
+
+type matomoDiagnostics struct {
+	SubmittedBatches int
+	SubmittedHits    int
+	TrackedHits      int
+	InvalidHits      int
+	UnknownHits      int
+	ReasonCounts     map[string]int
+	ParseErrors      int
+}
+
+type matomoBulkResponse struct {
+	Status          string `json:"status"`
+	Message         string `json:"message"`
+	Tracked         *int   `json:"tracked"`
+	Invalid         *int   `json:"invalid"`
+	InvalidRequests []any  `json:"invalid_requests"`
+}
+
+func newMatomoDiagnostics() *matomoDiagnostics {
+	return &matomoDiagnostics{
+		ReasonCounts: make(map[string]int),
+	}
+}
+
+func (d *matomoDiagnostics) addBatchResult(batchSize int, body []byte) {
+	d.SubmittedBatches++
+	d.SubmittedHits += batchSize
+
+	var parsed matomoBulkResponse
+	if err := segmentjson.Unmarshal(body, &parsed); err != nil {
+		d.ParseErrors++
+		d.UnknownHits += batchSize
+		return
+	}
+
+	tracked := 0
+	if parsed.Tracked != nil {
+		tracked = *parsed.Tracked
+	}
+	invalid := 0
+	if parsed.Invalid != nil {
+		invalid = *parsed.Invalid
+	}
+
+	d.TrackedHits += tracked
+	d.InvalidHits += invalid
+	unknown := batchSize - tracked - invalid
+	if unknown > 0 {
+		d.UnknownHits += unknown
+	}
+
+	if len(parsed.InvalidRequests) > 0 {
+		for _, reason := range parsed.InvalidRequests {
+			message := strings.TrimSpace(fmt.Sprint(reason))
+			if message == "" {
+				message = "(empty reason)"
+			}
+			d.ReasonCounts[message]++
+		}
+	}
+
+	if parsed.Message != "" && invalid == 0 {
+		d.ReasonCounts[strings.TrimSpace(parsed.Message)]++
+	}
+}
+
+func (d *matomoDiagnostics) render(limit int) string {
+	if d == nil {
+		return ""
+	}
+
+	var out strings.Builder
+	out.WriteString("\nMatomo Batch Diagnostics\n")
+	out.WriteString("=======================\n")
+	fmt.Fprintf(&out, "Batches: %d\n", d.SubmittedBatches)
+	fmt.Fprintf(&out, "Submitted hits: %d\n", d.SubmittedHits)
+	fmt.Fprintf(&out, "Tracked hits: %d\n", d.TrackedHits)
+	fmt.Fprintf(&out, "Invalid hits: %d\n", d.InvalidHits)
+	fmt.Fprintf(&out, "Unknown status hits: %d\n", d.UnknownHits)
+	fmt.Fprintf(&out, "Response parse errors: %d\n", d.ParseErrors)
+
+	if len(d.ReasonCounts) == 0 {
+		return out.String()
+	}
+
+	type reasonPair struct {
+		Reason string
+		Count  int
+	}
+	reasons := make([]reasonPair, 0, len(d.ReasonCounts))
+	for reason, count := range d.ReasonCounts {
+		reasons = append(reasons, reasonPair{Reason: reason, Count: count})
+	}
+	sort.Slice(reasons, func(i, j int) bool {
+		if reasons[i].Count != reasons[j].Count {
+			return reasons[i].Count > reasons[j].Count
+		}
+		return reasons[i].Reason < reasons[j].Reason
+	})
+	if limit > 0 && len(reasons) > limit {
+		reasons = reasons[:limit]
+	}
+
+	out.WriteString("Top invalid reasons:\n")
+	for index, item := range reasons {
+		fmt.Fprintf(&out, "%d. %s (%d)\n", index+1, item.Reason, item.Count)
+	}
+	return out.String()
 }
 
 func (s *fileStats) addOutcome(outcome lineOutcome) {
@@ -390,6 +501,8 @@ type Importer struct {
 	excludeExts  map[string]struct{}
 	excludeCIDRs []netip.Prefix
 	httpClient   *http.Client
+	matomoDebug  bool
+	diagnostics  *matomoDiagnostics
 }
 
 func NewImporter(cfg Config, log *logger, matcher *BotMatcher) (*Importer, error) {
@@ -428,6 +541,7 @@ func NewImporter(cfg Config, log *logger, matcher *BotMatcher) (*Importer, error
 		excludeExts:  exts,
 		excludeCIDRs: cidrs,
 		httpClient:   buildHTTPClient(cfg.Matomo.HTTPSProxy),
+		diagnostics:  newMatomoDiagnostics(),
 	}, nil
 }
 
@@ -740,14 +854,21 @@ func (i *Importer) submitHits(batch []Hit) bool {
 		return false
 	}
 	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		i.log.Errorf("Could not read Matomo response body: %v", readErr)
+		return false
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		i.log.Errorf("Request failed: %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		return false
 	}
 
 	i.log.Debugf("Actual status code: %d", resp.StatusCode)
+	if i.matomoDebug {
+		i.diagnostics.addBatchResult(len(batch), body)
+	}
 	return true
 }
 
@@ -859,6 +980,8 @@ func parseArgs(args []string) (cliArgs, error) {
 		case arg == "--report":
 			parsed.Report = true
 			parsed.DryRun = true
+		case arg == "--matomo-debug":
+			parsed.MatomoDebug = true
 		case arg == "--config" || arg == "-c":
 			index++
 			if index >= len(args) {
@@ -904,7 +1027,7 @@ func readConfig(path string) (Config, error) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s [--config FILE] [--bots-file FILE] [--debug] [--verbose] [--dry-run] [--report] logfile [logfile ...]\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "Usage: %s [--config FILE] [--bots-file FILE] [--debug] [--verbose] [--dry-run] [--report] [--matomo-debug] logfile [logfile ...]\n", filepath.Base(os.Args[0]))
 }
 
 func renderReportTable(stats []fileStats) string {
@@ -1043,11 +1166,15 @@ func main() {
 		log.Errorf("Configuration error: %v", err)
 		os.Exit(1)
 	}
+	importer.matomoDebug = args.MatomoDebug
 
 	stats, success := importer.run(args.LogFiles, args.DryRun)
 	if args.Report {
 		fmt.Print(renderReportTable(stats))
 		fmt.Print(renderTopBotUserAgents(stats, 5))
+	}
+	if args.MatomoDebug && !args.DryRun {
+		fmt.Print(importer.diagnostics.render(10))
 	}
 
 	if !success {
