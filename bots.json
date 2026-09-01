@@ -781,7 +781,11 @@
     "cl0q-crawler",
     "InfoGuardDisclosureResearch",
     "FindiseBot",
-    "WebatlaBot"
+    "WebatlaBot",
+    "Kaupr",
+    "WRTNBot",
+    "DomainDrift",
+    "MyCellar"
   ],
   "regex_patterns": [
     "check_ssl_cert.*",
@@ -863,9 +867,9 @@
     "Grafana/(\\d+\\.[.\\d]+)",
     "(GoGuides(?:Crawler|DiscoveryBot))",
     "(GreenWebChecker|gwf-carbon-txt-crawler)",
-    "(ABEvalBot|AdsTxtCrawlerTP|ArtelLeadRadar|DNSResearchBot|Dormouse|FinderGo|FormFinder|GitCrawlerBot|HanaleiBot|HubSeedsBot|ImportDomains|KenyaDomainScorer|LetrixLabs|PhishBucketRust|PostitLeadDiscovery|PrivacyPolicyBot|ProductLookoutBot|Robozilla|Secweb-Sectxt|SeoCherryBot|ShopifyChecker|SitemapCrawler\\.de|SleepBot|StudyBot|The Knowledge AI|Thinkbot|ThinkChaos|TprAdsTxtCrawler|WATCrawler)",
-    "(CheckerProxy|CMSLookup|CSE-Scanner|DomainProbe|FreePBX-Scanner|Goosee-Audit|NetScope-DomainScanner|SecurityScanner|Shodan-Pull|TLM-Audit-Scanner)",
+    "(ABEvalBot|AdsTxtCrawlerTP|ArtelLeadRadar|DNSResearchBot|Dormouse|FinderGo|FormFinder|GitCrawlerBot|HanaleiBot|HubSeedsBot|ImportDomains|KenyaDomainScorer|LetrixLabs|PhishBucketRust|PostitLeadDiscovery|PrivacyPolicyBot|ProductLookoutBot|Robozilla|Secweb-Sectxt|SeoCherryBot|ShopifyChecker|SitemapCrawler\\.de|SleepBot|StudyBot|The Knowledge AI|Thinkbot|ThinkChaos|TprAdsTxtCrawler|WATCrawler|ProspectorBR)",
+    "(CheckerProxy|CMSLookup|CSE-Scanner|DomainProbe|FreePBX-Scanner|Goosee-Audit|NetScope-DomainScanner|SecurityScanner|Shodan-Pull|TLM-Audit-Scanner|wp2shell-check)",
     "nuhk|grub-client|Download Demon|SearchExpress|Microsoft URL Control|borg|altavista|dataminr\\.com|teoma|oegp|http%20client|htdig|mogimogi|larbin|scrubby|searchsight|semanticdiscovery|snappy|zeal(?!ot)|dataparksearch|findlinks|BrowserMob|URL2PNG|ZooShot|GomezA|Google SketchUp|Read%20Later|7Siters|centuryb\\.o\\.t9|InterNaetBoten|EasyBib AutoCite|Bidtellect|tomnomnom/meg|cortex|Re-re Studio|adreview|AHC/|NameOfAgent|Request-Promise|ALittle Client|Hello,? world|wp_is_mobile|0xAbyssalDoesntExist|Anarchy99|^revolt|nvd0rz|xfa1|Hakai|gbrmss|fuck-your-hp|IDBTE4M CODE87|Antoine|Insomania|Hells-Net|b3astmode|Linux Gnu \\(cow\\)|Test Certificate Info|iplabel|Magellan|TheSafex?Internetx?Search|Searcherx?web|kirkland-signature|LinkChain|survey-security-dot-txt|infrawatch|Time/|r00ts3c-owned-you|nvdorz|Root Slut|NiggaBalls|BotPoke|GlobalWebSearch|xx032_bo9vs83_2a|sslshed|geckotrail|Wordup|Keydrop|\\(compatible\\)|John Recon|SPARK COMMIT|masjesu|Komaru_The_Cat|Jesus Christ of Nazareth is LORD|Kowai|Hakai|LoliSec|LMAO|^xenu|^(?:chrome|desktop|firefox|Abcd|Dark|KvshClient|node|Node\\.js|Report Runner|url|Zeus|ZmEu)$|OnlyScans|TheInternetSearchx|Laravel Reaver|bang2013|libredtail|Mozilliqa|Tiberius|honeygain|AW-WB-Filter|SaferSoftwashLeadGen|YourUserAgentHere|phpneuralnetwork|Crusader/|multi-country-domains|platform-fingerprint|greedyhand|DomainExtractor|nsfw-go-placeholder-filter|Intently\\.co|KarnoProspectingStudio|recon-(?:crawler|engine)",
-    "[a-z0-9_-]*(?:(?\u003c!cu|Hu|power[ _]|m[ _])bot(?![ _]TAB|[ _]?5[0-9]|[ _]Senior|[ _]Junior)|analyzer|appengine|archiver?|checker|collector|crawl|crawler|(?\u003c!node-|uclient-|Mikrotik/\\d\\.[x\\d] |electron-)fetch(?:er)?|(?\u003c!url)grabber|indexer|inspector|lookup|monitor|^parser|probe|(?\u003c!Microsoft |banshee-)project(?!or)|(?\u003c!Google Wap |Blue |SpeedMode; )proxy|(?\u003c!P)research|resolver|robots|(?\u003c!Cam)scanner|scraper|script|searcher|(?\u003c!-)security|spider(?! 8)|study|transcoder|uptime|user[ _]?agent|validator|-(?:AI|Extended|User)/)(?:[^a-z]|$)"
+    "[a-z0-9_-]*(?:(?\u003c!cu|Hu|power[ _]|m[ _])bot(?![ _]TAB|[ _]?5[0-9]|[ _]Senior|[ _]Junior)|analyzer|appengine|archiver?|check(?:er)?|collector|crawl|crawler|(?\u003c!node-|uclient-|Mikrotik/\\d\\.[x\\d] |electron-)fetch(?:er)?|(?\u003c!url)grabber|indexer|inspector|lookup|monitor|^parser|probe|(?\u003c!Microsoft |banshee-)project(?!or)|(?\u003c!Google Wap |Blue |SpeedMode; )proxy|(?\u003c!P)research|resolver|robots|(?\u003c!Cam)scanner|scraper|script|searcher|(?\u003c!-)security|spider(?! 8)|study|transcoder|uptime|user[ _]?agent|validator|-(?:AI|Extended|User)/)(?:[^a-z]|$)"
   ]
 }
