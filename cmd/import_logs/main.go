@@ -96,11 +96,13 @@ type cliArgs struct {
 	DryRun      bool
 	Report      bool
 	MatomoDebug bool
+	OnlyBots    bool
 }
 
 type Config struct {
-	Matomo  MatomoConfig  `toml:"matomo"`
-	Exclude ExcludeConfig `toml:"exclude"`
+	Matomo     MatomoConfig     `toml:"matomo"`
+	BotRouting BotRoutingConfig `toml:"bot_routing"`
+	Exclude    ExcludeConfig    `toml:"exclude"`
 }
 
 type MatomoConfig struct {
@@ -109,6 +111,13 @@ type MatomoConfig struct {
 	IDSite     string `toml:"idsite"`
 	BatchSize  int    `toml:"batch_size"`
 	HTTPSProxy string `toml:"https_proxy"`
+}
+
+// BotRoutingConfig sends bot hits to a second site on the same Matomo instance.
+// It deliberately reuses the primary Matomo connection settings and credentials.
+type BotRoutingConfig struct {
+	Enabled bool   `toml:"enabled"`
+	IDSite  string `toml:"idsite"`
 }
 
 type ExcludeConfig struct {
@@ -509,6 +518,14 @@ func NewImporter(cfg Config, log *logger, matcher *BotMatcher) (*Importer, error
 	if cfg.Matomo.BatchSize <= 0 {
 		return nil, errors.New("matomo.batch_size must be greater than zero")
 	}
+	if cfg.BotRouting.Enabled {
+		if cfg.BotRouting.IDSite == "" {
+			return nil, errors.New("bot_routing.idsite must be set when bot_routing.enabled is true")
+		}
+		if !cfg.Exclude.Bots {
+			return nil, errors.New("exclude.bots must be true when bot_routing.enabled is true")
+		}
+	}
 
 	globs := make([]*regexp.Regexp, 0, len(cfg.Exclude.Paths))
 	for _, pattern := range cfg.Exclude.Paths {
@@ -679,17 +696,18 @@ func (i *Importer) applyLineFilters(parsedLine parsedLineContext) (lineOutcome, 
 
 	i.log.Debugf("passed extension check: ID: %s", requestID)
 
+	isBot := false
 	if i.cfg.Exclude.Bots {
 		matched, err := i.botMatcher.MatchString(parsedLine.userAgent)
 		if err != nil {
 			return lineOutcomeError, err
 		}
 		if matched {
-			i.log.Debugf("filtering %s: User agent is a bot. ID: %s", parsedLine.userAgent, requestID)
-			return lineOutcomeBot, nil
+			isBot = true
+			i.log.Debugf("classified %s as a bot: ID: %s", parsedLine.userAgent, requestID)
+		} else {
+			i.log.Debugf("keeping %s: User agent is not a bot. ID: %s", parsedLine.userAgent, requestID)
 		}
-
-		i.log.Debugf("keeping %s: User agent is not a bot. ID: %s", parsedLine.userAgent, requestID)
 	}
 
 	if len(i.excludeCIDRs) > 0 {
@@ -703,6 +721,9 @@ func (i *Importer) applyLineFilters(parsedLine parsedLineContext) (lineOutcome, 
 				return lineOutcomeIgnored, nil
 			}
 		}
+	}
+	if isBot {
+		return lineOutcomeBot, nil
 	}
 
 	i.log.Debugf("keeping line with request ID %s", requestID)
@@ -769,13 +790,20 @@ func (i *Importer) parseLine(line []byte, lineno int) (Hit, lineOutcome, error) 
 	if err != nil {
 		return Hit{}, lineOutcomeError, err
 	}
-	if outcome != lineOutcomeReal {
+	if outcome != lineOutcomeReal && outcome != lineOutcomeBot {
 		return Hit{}, outcome, nil
 	}
 
 	i.log.Debugf("creating hit for line with request ID %s", jsonRecord.RequestID.String())
-	hit := createHit(&jsonRecord, i.cfg.Matomo.IDSite, parsedLine.clientIP, parsedLine.requestPath)
-	return hit, lineOutcomeReal, nil
+	idSite := i.cfg.Matomo.IDSite
+	if outcome == lineOutcomeBot {
+		if !i.cfg.BotRouting.Enabled {
+			return Hit{}, outcome, nil
+		}
+		idSite = i.cfg.BotRouting.IDSite
+	}
+	hit := createHit(&jsonRecord, idSite, parsedLine.clientIP, parsedLine.requestPath)
+	return hit, outcome, nil
 }
 
 func openLogFile(path string) (io.ReadCloser, error) {
@@ -872,11 +900,13 @@ func (i *Importer) submitHits(batch []Hit) bool {
 	return true
 }
 
-func (i *Importer) parseLogFile(logfilePath string, dryRun bool) (fileStats, bool) {
+func (i *Importer) parseLogFile(logfilePath string, dryRun bool, onlyBots bool) (fileStats, bool) {
 	stats := fileStats{FilePath: logfilePath}
 	lineno := 0
-	pendingHits := make([]Hit, 0, i.cfg.Matomo.BatchSize)
-	count := 0
+	pendingRealHits := make([]Hit, 0, i.cfg.Matomo.BatchSize)
+	pendingBotHits := make([]Hit, 0, i.cfg.Matomo.BatchSize)
+	realCount := 0
+	botCount := 0
 	success := true
 
 	logfile, err := openLogFile(logfilePath)
@@ -905,20 +935,31 @@ func (i *Importer) parseLogFile(logfilePath string, dryRun bool) (fileStats, boo
 			if parseErr != nil {
 				i.log.Errorf("An exception occurred: %v", parseErr)
 				stats.addOutcome(lineOutcomeError)
-			} else if outcome != lineOutcomeReal {
+			} else if outcome != lineOutcomeReal && outcome != lineOutcomeBot {
+				stats.addOutcome(outcome)
+			} else {
 				stats.addOutcome(outcome)
 				if outcome == lineOutcomeBot {
 					stats.addBotUserAgent(extractUserAgentFromLine(line))
-				}
-			} else {
-				stats.addOutcome(lineOutcomeReal)
-				pendingHits = append(pendingHits, result)
-
-				if !dryRun && len(pendingHits) >= i.cfg.Matomo.BatchSize {
-					success = i.submitHits(pendingHits) && success
-					count += len(pendingHits)
-					pendingHits = pendingHits[:0]
-					i.log.Infof("Submitted %d records", count)
+					if i.cfg.BotRouting.Enabled {
+						pendingBotHits = append(pendingBotHits, result)
+						if !dryRun && len(pendingBotHits) >= i.cfg.Matomo.BatchSize {
+							success = i.submitHits(pendingBotHits) && success
+							botCount += len(pendingBotHits)
+							pendingBotHits = pendingBotHits[:0]
+							i.log.Infof("Submitted %d bot records", botCount)
+						}
+					}
+				} else {
+					if !onlyBots {
+						pendingRealHits = append(pendingRealHits, result)
+						if !dryRun && len(pendingRealHits) >= i.cfg.Matomo.BatchSize {
+							success = i.submitHits(pendingRealHits) && success
+							realCount += len(pendingRealHits)
+							pendingRealHits = pendingRealHits[:0]
+							i.log.Infof("Submitted %d real records", realCount)
+						}
+					}
 				}
 			}
 		}
@@ -928,15 +969,33 @@ func (i *Importer) parseLogFile(logfilePath string, dryRun bool) (fileStats, boo
 		}
 	}
 
-	if len(pendingHits) > 0 && !dryRun {
-		success = i.submitHits(pendingHits) && success
-		count += len(pendingHits)
-		i.log.Infof("Submitted %d records", count)
+	if len(pendingRealHits) > 0 && !dryRun {
+		success = i.submitHits(pendingRealHits) && success
+		realCount += len(pendingRealHits)
+		i.log.Infof("Submitted %d real records", realCount)
+	}
+	if len(pendingBotHits) > 0 && !dryRun {
+		success = i.submitHits(pendingBotHits) && success
+		botCount += len(pendingBotHits)
+		i.log.Infof("Submitted %d bot records", botCount)
 	}
 
 	i.log.Infof("Found %d lines", stats.Total)
-	i.log.Infof("Filtered %d", stats.Bot+stats.Ignored+stats.Errors)
-	i.log.Infof("Submitting %d results", stats.Real)
+	if i.cfg.BotRouting.Enabled {
+		i.log.Infof("Excluded %d non-bot-filtered or invalid results", stats.Ignored+stats.Errors)
+	} else {
+		i.log.Infof("Filtered %d", stats.Bot+stats.Ignored+stats.Errors)
+	}
+	if onlyBots {
+		i.log.Infof("Skipping %d real results", stats.Real)
+	} else {
+		i.log.Infof("Submitting %d real results", stats.Real)
+	}
+	if i.cfg.BotRouting.Enabled {
+		i.log.Infof("Submitting %d bot results", stats.Bot)
+	} else {
+		i.log.Infof("Filtered %d bot results", stats.Bot)
+	}
 
 	if dryRun {
 		i.log.Infof("Dry run. Exiting before submitting results")
@@ -948,12 +1007,12 @@ func (i *Importer) parseLogFile(logfilePath string, dryRun bool) (fileStats, boo
 	return stats, success
 }
 
-func (i *Importer) run(logfiles []string, dryRun bool) ([]fileStats, bool) {
+func (i *Importer) run(logfiles []string, dryRun bool, onlyBots bool) ([]fileStats, bool) {
 	stats := make([]fileStats, 0, len(logfiles))
 	success := true
 	for _, logfile := range logfiles {
 		i.log.Infof("Processing file %s", logfile)
-		fileStats, fileSuccess := i.parseLogFile(logfile, dryRun)
+		fileStats, fileSuccess := i.parseLogFile(logfile, dryRun, onlyBots)
 		stats = append(stats, fileStats)
 		success = fileSuccess && success
 	}
@@ -982,6 +1041,8 @@ func parseArgs(args []string) (cliArgs, error) {
 			parsed.DryRun = true
 		case arg == "--matomo-debug":
 			parsed.MatomoDebug = true
+		case arg == "--only-bots":
+			parsed.OnlyBots = true
 		case arg == "--config" || arg == "-c":
 			index++
 			if index >= len(args) {
@@ -1013,6 +1074,13 @@ func parseArgs(args []string) (cliArgs, error) {
 	return parsed, nil
 }
 
+func validateRunMode(cfg Config, onlyBots bool) error {
+	if onlyBots && !cfg.BotRouting.Enabled {
+		return errors.New("--only-bots requires bot_routing.enabled to be true")
+	}
+	return nil
+}
+
 func readConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1027,10 +1095,10 @@ func readConfig(path string) (Config, error) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s [--config FILE] [--bots-file FILE] [--debug] [--verbose] [--dry-run] [--report] [--matomo-debug] logfile [logfile ...]\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "Usage: %s [--config FILE] [--bots-file FILE] [--debug] [--verbose] [--dry-run] [--report] [--matomo-debug] [--only-bots] logfile [logfile ...]\n", filepath.Base(os.Args[0]))
 }
 
-func renderReportTable(stats []fileStats) string {
+func renderReportTable(stats []fileStats, botRoutingEnabled bool, onlyBots bool) string {
 	total := fileStats{FilePath: "TOTAL"}
 	rows := make([]fileStats, 0, len(stats)+1)
 	rows = append(rows, stats...)
@@ -1053,10 +1121,18 @@ func renderReportTable(stats []fileStats) string {
 	}
 
 	var out strings.Builder
+	realLabel := "Real"
+	if onlyBots {
+		realLabel = "Real skipped"
+	}
+	botLabel := "Bot"
+	if botRoutingEnabled {
+		botLabel = "Bot routed"
+	}
 	fmt.Fprintf(&out, "%-*s  %10s  %7s  %10s  %7s  %10s  %7s  %10s  %7s\n",
 		fileWidth, "File",
-		"Real", "Real %",
-		"Bot", "Bot %",
+		realLabel, "Real %",
+		botLabel, "Bot %",
 		"Ignored", "Ignored %",
 		"Errors", "Error %",
 	)
@@ -1167,10 +1243,14 @@ func main() {
 		os.Exit(1)
 	}
 	importer.matomoDebug = args.MatomoDebug
+	if err := validateRunMode(cfg, args.OnlyBots); err != nil {
+		log.Errorf("Configuration error: %v", err)
+		os.Exit(1)
+	}
 
-	stats, success := importer.run(args.LogFiles, args.DryRun)
+	stats, success := importer.run(args.LogFiles, args.DryRun, args.OnlyBots)
 	if args.Report {
-		fmt.Print(renderReportTable(stats))
+		fmt.Print(renderReportTable(stats, cfg.BotRouting.Enabled, args.OnlyBots))
 		fmt.Print(renderTopBotUserAgents(stats, 5))
 	}
 	if args.MatomoDebug && !args.DryRun {

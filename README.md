@@ -25,6 +25,31 @@ If you run from cron or another working directory, pass the bots file explicitly
 It supports plain, gzip, and bzip2 logs; config-driven filtering; CIDR exclusions; custom dimensions; Matomo batching;
 and bot detection based on the Matomo device-detector regex list.
 
+## Separate Bot Statistics
+
+By default, detected bots are excluded from the primary Matomo site. To upload them to a separate site on the same
+Matomo instance while processing each log only once, configure bot routing:
+
+```toml
+[bot_routing]
+enabled = true
+idsite = "2"
+```
+
+Bot routing reuses the URL, authentication token, proxy, and batch size from `[matomo]`. It requires
+`[exclude].bots = true`. Path, extension, and CIDR exclusions still discard matching bot requests, so the bot site
+contains only traffic that would otherwise be eligible for statistics. The `--report` output labels these hits as
+`Bot routed` when this mode is enabled.
+
+To backfill only the bot site from an existing log, use `--only-bots`:
+
+```sh
+./import_logs --config config.toml --only-bots /var/log/nginx/access.log.1
+```
+
+This mode requires enabled bot routing. It still reads and classifies every record, but it skips all real-site uploads
+and submits only eligible bot hits. In reports, real hits are labelled `Real skipped`.
+
 ## Bot Regex Data
 
 The importer reads bot regex data from `bots.json`. Refresh the dataset with:

@@ -278,7 +278,7 @@ func TestParseLogFileDryRunHandlesPlainGzipAndBzip2(t *testing.T) {
 	}
 
 	for _, path := range []string{plainPath, gzipPath, bzipPath} {
-		if _, ok := importer.parseLogFile(path, true); !ok {
+		if _, ok := importer.parseLogFile(path, true, false); !ok {
 			t.Fatalf("expected dry-run success for %s", path)
 		}
 	}
@@ -316,7 +316,7 @@ func TestSubmitHitsAndBatching(t *testing.T) {
 		t.Fatalf("write batch file: %v", err)
 	}
 
-	if _, ok := importer.parseLogFile(path, false); !ok {
+	if _, ok := importer.parseLogFile(path, false, false); !ok {
 		t.Fatal("expected upload success")
 	}
 	if len(requests) != 2 {
@@ -327,6 +327,181 @@ func TestSubmitHitsAndBatching(t *testing.T) {
 	}
 	if requests[0].TokenAuth != "secret" {
 		t.Fatalf("unexpected token auth: %s", requests[0].TokenAuth)
+	}
+}
+
+func TestSubmitHitsRoutesBotsToSeparateSite(t *testing.T) {
+	var requests []matomoPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload matomoPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		requests = append(requests, payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Matomo.URL = server.URL
+	cfg.BotRouting = BotRoutingConfig{Enabled: true, IDSite: "99"}
+	matcher, err := compileBotMatcher(botdata.BuildFile([]string{"ExampleBot"}))
+	if err != nil {
+		t.Fatalf("compile matcher: %v", err)
+	}
+	importer, err := NewImporter(cfg, testLogger(), matcher)
+	if err != nil {
+		t.Fatalf("new importer: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mixed.log")
+	botLine := strings.Replace(sampleLogLine, "\"Mozilla/5.0\"", "\"ExampleBot/1.0\"", 1)
+	if err := os.WriteFile(path, []byte(sampleLogLine+botLine), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	stats, ok := importer.parseLogFile(path, false, false)
+	if !ok {
+		t.Fatal("expected upload success")
+	}
+	if stats.Real != 1 || stats.Bot != 1 || stats.Ignored != 0 {
+		t.Fatalf("unexpected stats: %#v", stats)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("expected real and bot requests, got %d", len(requests))
+	}
+	sites := make(map[string]bool)
+	for _, request := range requests {
+		if request.TokenAuth != "secret" || len(request.Requests) != 1 {
+			t.Fatalf("unexpected payload: %#v", request)
+		}
+		sites[request.Requests[0].IDSite] = true
+	}
+	if !sites["7"] || !sites["99"] {
+		t.Fatalf("expected primary and bot site IDs, got %#v", sites)
+	}
+}
+
+func TestBotCIDRExclusionAppliesBeforeRouting(t *testing.T) {
+	cfg := testConfig()
+	cfg.BotRouting = BotRoutingConfig{Enabled: true, IDSite: "99"}
+	cfg.Exclude.Addresses = []string{"1.2.3.0/24"}
+	matcher, err := compileBotMatcher(botdata.BuildFile([]string{"ExampleBot"}))
+	if err != nil {
+		t.Fatalf("compile matcher: %v", err)
+	}
+	importer, err := NewImporter(cfg, testLogger(), matcher)
+	if err != nil {
+		t.Fatalf("new importer: %v", err)
+	}
+
+	line := strings.Replace(sampleLogLine, "\"Mozilla/5.0\"", "\"ExampleBot/1.0\"", 1)
+	_, outcome, err := importer.parseLine([]byte(line), 1)
+	if err != nil {
+		t.Fatalf("parseLine error: %v", err)
+	}
+	if outcome != lineOutcomeIgnored {
+		t.Fatalf("expected CIDR-filtered bot to be ignored, got %v", outcome)
+	}
+}
+
+func TestBotRoutingConfigurationValidation(t *testing.T) {
+	matcher, err := compileBotMatcher(botdata.BuildFile([]string{"ExampleBot"}))
+	if err != nil {
+		t.Fatalf("compile matcher: %v", err)
+	}
+
+	missingIDSite := testConfig()
+	missingIDSite.BotRouting.Enabled = true
+	if _, err := NewImporter(missingIDSite, testLogger(), matcher); err == nil {
+		t.Fatal("expected missing bot idsite to be rejected")
+	}
+
+	botsDisabled := testConfig()
+	botsDisabled.BotRouting = BotRoutingConfig{Enabled: true, IDSite: "99"}
+	botsDisabled.Exclude.Bots = false
+	if _, err := NewImporter(botsDisabled, testLogger(), matcher); err == nil {
+		t.Fatal("expected disabled bot matching to be rejected")
+	}
+}
+
+func TestOnlyBotsSkipsRealHits(t *testing.T) {
+	var requests []matomoPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload matomoPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		requests = append(requests, payload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Matomo.URL = server.URL
+	cfg.BotRouting = BotRoutingConfig{Enabled: true, IDSite: "99"}
+	matcher, err := compileBotMatcher(botdata.BuildFile([]string{"ExampleBot"}))
+	if err != nil {
+		t.Fatalf("compile matcher: %v", err)
+	}
+	importer, err := NewImporter(cfg, testLogger(), matcher)
+	if err != nil {
+		t.Fatalf("new importer: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "only-bots.log")
+	botLine := strings.Replace(sampleLogLine, "\"Mozilla/5.0\"", "\"ExampleBot/1.0\"", 1)
+	if err := os.WriteFile(path, []byte(sampleLogLine+botLine), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	stats, ok := importer.parseLogFile(path, false, true)
+	if !ok {
+		t.Fatal("expected upload success")
+	}
+	if stats.Real != 1 || stats.Bot != 1 {
+		t.Fatalf("unexpected stats: %#v", stats)
+	}
+	if len(requests) != 1 || len(requests[0].Requests) != 1 || requests[0].Requests[0].IDSite != "99" {
+		t.Fatalf("expected one bot-site request, got %#v", requests)
+	}
+}
+
+func TestOnlyBotsDryRunDoesNotSubmit(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := testConfig()
+	cfg.Matomo.URL = server.URL
+	cfg.BotRouting = BotRoutingConfig{Enabled: true, IDSite: "99"}
+	matcher, err := compileBotMatcher(botdata.BuildFile([]string{"ExampleBot"}))
+	if err != nil {
+		t.Fatalf("compile matcher: %v", err)
+	}
+	importer, err := NewImporter(cfg, testLogger(), matcher)
+	if err != nil {
+		t.Fatalf("new importer: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "only-bots-dry-run.log")
+	botLine := strings.Replace(sampleLogLine, "\"Mozilla/5.0\"", "\"ExampleBot/1.0\"", 1)
+	if err := os.WriteFile(path, []byte(sampleLogLine+botLine), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	if _, ok := importer.parseLogFile(path, true, true); !ok {
+		t.Fatal("expected dry-run success")
+	}
+	if requests != 0 {
+		t.Fatalf("expected no requests during dry run, got %d", requests)
 	}
 }
 
@@ -379,6 +554,27 @@ func TestParseArgsSupportsMatomoDebug(t *testing.T) {
 	}
 }
 
+func TestParseArgsSupportsOnlyBots(t *testing.T) {
+	args, err := parseArgs([]string{"--only-bots", "first.log"})
+	if err != nil {
+		t.Fatalf("parseArgs error: %v", err)
+	}
+	if !args.OnlyBots {
+		t.Fatalf("expected OnlyBots=true: %#v", args)
+	}
+}
+
+func TestOnlyBotsRequiresBotRouting(t *testing.T) {
+	if err := validateRunMode(testConfig(), true); err == nil {
+		t.Fatal("expected disabled bot routing to be rejected")
+	}
+	cfg := testConfig()
+	cfg.BotRouting = BotRoutingConfig{Enabled: true, IDSite: "99"}
+	if err := validateRunMode(cfg, true); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
 func TestMatomoDiagnosticsBatchResult(t *testing.T) {
 	diag := newMatomoDiagnostics()
 	body := []byte(`{"status":"success","tracked":3,"invalid":2,"invalid_requests":["bad url","bad url"]}`)
@@ -410,7 +606,7 @@ func TestRenderReportTableIncludesTotal(t *testing.T) {
 		{FilePath: "b.log", Total: 20, Real: 8, Bot: 6, Ignored: 4, Errors: 2},
 	}
 
-	report := renderReportTable(stats)
+	report := renderReportTable(stats, false, false)
 	for _, expected := range []string{"File", "Real", "Bot", "Ignored", "Errors", "a.log", "b.log", "TOTAL"} {
 		if !strings.Contains(report, expected) {
 			t.Fatalf("report missing %q:\n%s", expected, report)
@@ -418,6 +614,20 @@ func TestRenderReportTableIncludesTotal(t *testing.T) {
 	}
 	if !strings.Contains(report, " 12 ") {
 		t.Fatalf("report missing total real count:\n%s", report)
+	}
+}
+
+func TestRenderReportTableLabelsRoutedBots(t *testing.T) {
+	report := renderReportTable([]fileStats{{FilePath: "a.log", Bot: 1, Total: 1}}, true, false)
+	if !strings.Contains(report, "Bot routed") {
+		t.Fatalf("expected routed bot label:\n%s", report)
+	}
+}
+
+func TestRenderReportTableLabelsSkippedRealHits(t *testing.T) {
+	report := renderReportTable([]fileStats{{FilePath: "a.log", Real: 1, Total: 1}}, true, true)
+	if !strings.Contains(report, "Real skipped") {
+		t.Fatalf("expected skipped real label:\n%s", report)
 	}
 }
 
@@ -609,7 +819,7 @@ func BenchmarkParseLogFileFixture(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := importer.parseLogFile(fixturePath, true); !ok {
+		if _, ok := importer.parseLogFile(fixturePath, true, false); !ok {
 			b.Fatalf("parseLogFile returned failure")
 		}
 	}

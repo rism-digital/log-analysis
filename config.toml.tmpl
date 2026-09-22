@@ -4,6 +4,12 @@ auth_token = "supersecretkey"
 idsite = "1"
 batch_size = 600
 
+# Optional: upload detected bots to a separate site on this same Matomo instance.
+# When disabled or omitted, bots remain excluded from the primary site.
+[bot_routing]
+enabled = false
+# idsite = "2"
+
 [exclude]
 bots = true
 paths = [
@@ -14,4 +20,3 @@ extensions = [
     'jpeg', 'css', 'woff', 'class', 'woff2', 'xml', 'swf', 'gif',
     'otf', 'bmp', 'webmanifest'
 ]
-
