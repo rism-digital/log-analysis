@@ -377,7 +377,18 @@ func TestSubmitHitsRoutesBotsToSeparateSite(t *testing.T) {
 		if request.TokenAuth != "secret" || len(request.Requests) != 1 {
 			t.Fatalf("unexpected payload: %#v", request)
 		}
-		sites[request.Requests[0].IDSite] = true
+		hit := request.Requests[0]
+		sites[hit.IDSite] = true
+		switch hit.IDSite {
+		case "7":
+			if hit.Bots != "" {
+				t.Fatalf("real hit unexpectedly set bots override: %#v", hit)
+			}
+		case "99":
+			if hit.Bots != "1" {
+				t.Fatalf("bot hit missing bots override: %#v", hit)
+			}
+		}
 	}
 	if !sites["7"] || !sites["99"] {
 		t.Fatalf("expected primary and bot site IDs, got %#v", sites)
@@ -466,7 +477,7 @@ func TestOnlyBotsSkipsRealHits(t *testing.T) {
 	if stats.Real != 1 || stats.Bot != 1 {
 		t.Fatalf("unexpected stats: %#v", stats)
 	}
-	if len(requests) != 1 || len(requests[0].Requests) != 1 || requests[0].Requests[0].IDSite != "99" {
+	if len(requests) != 1 || len(requests[0].Requests) != 1 || requests[0].Requests[0].IDSite != "99" || requests[0].Requests[0].Bots != "1" {
 		t.Fatalf("expected one bot-site request, got %#v", requests)
 	}
 }

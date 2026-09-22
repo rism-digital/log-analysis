@@ -39,7 +39,8 @@ idsite = "2"
 Bot routing reuses the URL, authentication token, proxy, and batch size from `[matomo]`. It requires
 `[exclude].bots = true`. Path, extension, and CIDR exclusions still discard matching bot requests, so the bot site
 contains only traffic that would otherwise be eligible for statistics. The `--report` output labels these hits as
-`Bot routed` when this mode is enabled.
+`Bot routed` when this mode is enabled. Bot-site hits include Matomo's `bots=1` tracking override, which makes
+Matomo retain detected bot user agents; the main site never receives this override.
 
 To backfill only the bot site from an existing log, use `--only-bots`:
 

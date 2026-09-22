@@ -352,6 +352,7 @@ type Hit struct {
 	Long           string `json:"long"`
 	PFSrv          string `json:"pf_srv"`
 	BWBytes        string `json:"bw_bytes"`
+	Bots           string `json:"bots,omitempty"`
 	APIV           string `json:"apiv"`
 	Rec            string `json:"rec"`
 	IDSite         string `json:"idsite"`
@@ -739,14 +740,14 @@ func extractExtension(path string) string {
 	return path[lastDot+1:]
 }
 
-func createHit(parsedLine *logRecord, idSite string, clientIP string, requestPath string) Hit {
+func createHit(parsedLine *logRecord, idSite string, clientIP string, requestPath string, trackBot bool) Hit {
 	host := parsedLine.HTTPHost.String()
 	scheme := parsedLine.Scheme.String()
 	url := scheme + "://" + host + requestPath
 
 	acceptHeader := strings.ReplaceAll(parsedLine.HTTPAccept.String(), "+", "%2b")
 
-	return Hit{
+	hit := Hit{
 		URL:            url,
 		URLRef:         parsedLine.HTTPReferer.String(),
 		UA:             parsedLine.HTTPUserAgent.String(),
@@ -766,6 +767,10 @@ func createHit(parsedLine *logRecord, idSite string, clientIP string, requestPat
 		QueuedTracking: "0",
 		DP:             "1",
 	}
+	if trackBot {
+		hit.Bots = "1"
+	}
+	return hit
 }
 
 func (i *Importer) parseLine(line []byte, lineno int) (Hit, lineOutcome, error) {
@@ -802,7 +807,7 @@ func (i *Importer) parseLine(line []byte, lineno int) (Hit, lineOutcome, error) 
 		}
 		idSite = i.cfg.BotRouting.IDSite
 	}
-	hit := createHit(&jsonRecord, idSite, parsedLine.clientIP, parsedLine.requestPath)
+	hit := createHit(&jsonRecord, idSite, parsedLine.clientIP, parsedLine.requestPath, outcome == lineOutcomeBot)
 	return hit, outcome, nil
 }
 
